@@ -1,79 +1,154 @@
+
+#include <Arduino.h>
+#include <Adafruit_SSD1306.h>
 #include "wled.h"
-//#warning "KBIS26 USERMOD COMPILED"
-#pragma message WLED_RELEASE_NAME
 
-struct message_structure_t {
-  uint8_t seq[4];
-  uint8_t button;
-};
-
+// Remove Adafruit's generic macros so WLED's can exist without warnings
+#ifdef WHITE
+  #undef WHITE
+#endif
+#ifdef BLACK
+  #undef BLACK
+#endif
 class UsermodKBIS26 : public Usermod {
   private:
-    uint32_t last_seq = 0;
-    static constexpr const char* _name = "KBIS26";
+    static constexpr char _name[] = "KBIS26";
+    const int LED1 = 16;
+    const int REED = 12;
+    const int TIMEBUTTON = 13;
+    const int POT = A0;
+    const int MAXEFFECTTIME = 40000;
+    const int MINEFFECTTIME = 1000;
+    unsigned long timestamp1 = 0;
+    int effectTime = (MAXEFFECTTIME - MINEFFECTTIME)/2;
+    int previousEffectTime = 0;
+    uint8_t brightness = 150;
+    int oldvar = 0;
+    const uint8_t PRESET_ACTIVE = 2; // bright/effect
+    const uint8_t PRESET_IDLE   = 1; // dim/normal
+    bool presetLaunched = false;
 
-    bool UMhandleWiZdata(const uint8_t* incomingData, size_t len) {
-        if (len != sizeof(message_structure_t)) {
-            DEBUG_PRINTF_P(PSTR("Unknown ESP-NOW msg length: %u\n"), len);
-            return false;
+    // oled
+    static constexpr int OLED_RESET = -1;        // Reset pin # (or -1 if sharing Arduino reset pin)
+    static constexpr uint8_t SCREEN_ADDRESS = 0x3C;  ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+    static constexpr int SCREEN_WIDTH = 128;     // OLED display width, in pixels
+    static constexpr int SCREEN_HEIGHT = 32;     // OLED display height, in pixels
+    Adafruit_SSD1306 display = Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+    bool displayReady = false;
+
+    void resetDisplay() {
+    if (!displayReady) return;
+    display.clearDisplay();
+    display.setTextSize(1);               // Normal 1:1 pixel scale
+    display.setTextColor(SSD1306_WHITE);  // Draw white text
+    display.setCursor(0, 0);
+    }
+
+    template<typename T>
+    void printStatus(const T& value) {
+    resetDisplay();
+    display.print(value);
+    }
+
+    void pollTimerButton(){
+        static unsigned long timestamp2 = 0;
+        int delay = 500;
+        unsigned long currentTime = millis();
+        if (currentTime - timestamp2 <= delay){
+            return;
         }
+        if (!digitalRead(TIMEBUTTON)){
+            effectTime += 1000;
+            if (effectTime > MAXEFFECTTIME){
+            effectTime = 0;
+            }
+            timestamp2 = currentTime;
+        } 
+    }
 
-        const message_structure_t* incoming =
-            reinterpret_cast<const message_structure_t*>(incomingData);
-
-        uint32_t cur_seq =
-            incoming->seq[0] |
-            (incoming->seq[1] << 8) |
-            (incoming->seq[2] << 16) |
-            (incoming->seq[3] << 24);
-
-        if (cur_seq == last_seq) return true;
-
-        last_seq = cur_seq;
-        uint8_t button = incoming->button;
-
-        if (button == 1) {
-            DEBUG_PRINT(F("WiZ ON button pressed (seq="));
-            DEBUG_PRINT(cur_seq);
-            DEBUG_PRINTLN(F(")"));
-            return true;
+    void pollpot(){
+        int var = analogRead(POT);
+        uint8_t perc = map(var,1,4095,1,100);
+        var = map(var,0,4095,1,255);
+        if (abs(var-oldvar)>2){
+            brightness = var;
+            display.fillRect(0, 8, 128, 8, SSD1306_BLACK);
+            display.setCursor(0,8);
+            display.print(perc);
+            display.display();
+            oldvar = var;
         }
+    }
 
-        return false;
+    void LEDcontrol() {
+        static bool doorClosed = false;
+
+        bool reedClosed = (digitalRead(REED) == LOW)? true: false; // closed = LOW
+
+        if (!reedClosed) { // door open
+            doorClosed = false;
+
+            if (presetLaunched) {
+            applyPreset(PRESET_IDLE, CALL_MODE_DIRECT_CHANGE);
+            presetLaunched = false;
+            Serial.println("preset idle.");
+            }
+            return;
+        }
+        if (!presetLaunched){
+            applyPreset(PRESET_ACTIVE, CALL_MODE_DIRECT_CHANGE);
+            presetLaunched = true;
+            Serial.println("preset active");
+        }
+        return;
+        
     }
 
   public:
     void setup() override {
-        DEBUG_PRINTLN(F("KBIS_26 usermod setup"));
-        delay(2000);
+        pinMode(REED, INPUT_PULLUP);
+          // Ensure I2C is up on your chosen pins
+        Wire.begin(I2CSDAPIN, I2CSCLPIN);   // uses your -D I2CSDAPIN=... -D I2CSCLPIN=...
+
+        // Optional but often helps stability
+        Wire.setClock(400000);             // or 100000 if you have long wires
+
+        // Init the OLED
+        displayReady = display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
+
+        if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+            Serial.println("SSD1306 not found.");
+        } else {
+            Serial.println("SSD1306 found.");
+        }
+        display.display();  // SSD splash screen
+        //delay(2000);
+        resetDisplay();
+        display.display();
+
         Serial.println("KBIS working!!");
     }
 
     void loop() override {
-        static uint32_t t = 0;
-        if (millis() - t > 2000) {
-            t = millis();
-            Serial.println(F("KBIS: loop alive"));
+        LEDcontrol();
+        pollTimerButton();
+        pollpot();
+        if(previousEffectTime != effectTime){
+            previousEffectTime = effectTime;
+            printStatus(effectTime/1000);
+            display.display();
         }
     }
-
+    /*
     void addToConfig(JsonObject& root) override {
     JsonObject top = root.createNestedObject(FPSTR(_name));
     top["active"] = true;
     top["message"] = "KBIS26 usermod is running";
     }
-
+    */
   uint16_t getId() override {
     return USERMOD_ID_UNSPECIFIED;
   }
-    /*
-    bool onEspNowMessage(uint8_t* mac, uint8_t* data, int len) {
-        if (data[0] == 0x91 || data[0] == 0x81 || data[0] == 0x80) {
-            return UMhandleWiZdata(data, len);
-        }
-        return false;
-    }
-        */
 };
 
 static UsermodKBIS26 kbis26;

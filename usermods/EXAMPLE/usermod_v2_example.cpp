@@ -114,7 +114,7 @@ class MyExampleUsermod : public Usermod {
     void loop() override {
       // if usermod is disabled or called during strip updating just exit
       // NOTE: on very long strips strip.isUpdating() may always return true so update accordingly
-      //if (!enabled || strip.isUpdating()) return;
+      if (!enabled || strip.isUpdating()) return;
 
       // do your magic here
       if (millis() - lastTime > 1000) {

@@ -1,4 +1,7 @@
 {
   "name": "kbis26",
-  "build": { "libArchive": false }
+  "build": { "libArchive": false },
+  "dependencies": {
+    "adafruit/Adafruit SSD1306": "^2.5.9"
+  }
 }
