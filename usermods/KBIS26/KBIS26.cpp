@@ -44,10 +44,13 @@ class UsermodKBIS26 : public Usermod {
     uint8_t cursorState[CURSOR_STATE_COUNT];
     uint8_t currentCursor = EMPTY_STATE;
     bool cfgDirty = false;
-    unsigned long cfgDirtySinceMs = 0;
+    uint32_t cfgDirtySinceMs = 0;
+    uint32_t bootUpDelay = 1000;
+    uint32_t bootUpTimestamp = 0;
+    const uint8_t bootUpBri = 10;
 
     static const char _name[] PROGMEM;
-    static Preferences prefs;
+    Preferences prefs;
 
     // oled
     static constexpr int OLED_RESET = -1;            // Reset pin # (or -1 if sharing Arduino reset pin)
@@ -84,6 +87,7 @@ class UsermodKBIS26 : public Usermod {
         static unsigned long timestamp2 = 0;
         int delay = 250;
         int timeout = 60000;
+
         unsigned long currentTime = millis();
         if (currentTime - timestamp2 <= delay) {
             return;
@@ -180,10 +184,8 @@ class UsermodKBIS26 : public Usermod {
         setCursor(row);
     }
     void markConfigDirty() {
-        if (!cfgDirty) {
-            cfgDirty = true;
-            cfgDirtySinceMs = millis();
-        }
+        cfgDirty = true;
+        cfgDirtySinceMs = millis();
     }
     void cursor() {
         cursorSelectButton();
@@ -220,54 +222,74 @@ class UsermodKBIS26 : public Usermod {
 
         switch (currentCursor) {
             case EFFECT_TIME: {
-                ycoord = 0;                // 1st line
-                const int STEP_MS = 5000;  // 5s
+                ycoord = 0;
+                const int STEP_MS = 5000;
+
                 int t = map(reading, 4095, 0, MINEFFECTTIME, MAXEFFECTTIME);
                 t = ((t + STEP_MS / 2) / STEP_MS) * STEP_MS;
                 t = constrain(t, MINEFFECTTIME, MAXEFFECTTIME);
-                if (t != previousDisplayVal) {
-                    effectTime = t;
-                    if (effectTime == MINEFFECTTIME) {
-                        effectTime = effectTime_default;
+
+                // "DFLT" sentinel -> store default instead of the sentinel
+                uint32_t newEffectTime = (t == MINEFFECTTIME) ? effectTime_default : (uint32_t)t;
+
+                // Only act if the stored value actually changes
+                if (newEffectTime != (uint32_t)effectTime) {
+                    effectTime = newEffectTime;
+
+                    if (t == MINEFFECTTIME) {
                         updateLine(ycoord, LABEL_ACTIVE_TIME, "DFLT");
                     } else {
                         int sec = effectTime / 1000;
                         updateLine(ycoord, LABEL_ACTIVE_TIME, sec, "s");
                     }
+
                     markConfigDirty();
-                    previousDisplayVal = t;
                 }
+
+                previousDisplayVal = t;  // keep this for UI/knob hysteresis if you want
                 break;
             }
             case ACTIVE: {
-                ycoord = 1;  // 2nd line
-                displayVal = map(reading, 4095, 0, 0, 100);
-                if (abs(displayVal - previousDisplayVal) >= HYST) {
-                    if (displayVal == 0) {
-                        activeBri = activeBri_default;
-                        updateLine(ycoord, LABEL_ACTIVE_BRI, LABEL_DEFAULT);
-                    } else {
-                        activeBri = map(reading, 4095, 0, 0, 255);
-                        updateLine(ycoord, LABEL_ACTIVE_BRI, displayVal, "%");
+                ycoord = 1;
+                int pct = map(reading, 4095, 0, 0, 100);
+
+                if (abs(pct - previousDisplayVal) >= HYST) {
+                    uint8_t newActive = (pct == 0) ? activeBri_default : (uint8_t)map(reading, 4095, 0, 0, 255);
+
+                    if (newActive != activeBri) {
+                        activeBri = newActive;
+
+                        if (pct == 0)
+                            updateLine(ycoord, LABEL_ACTIVE_BRI, LABEL_DEFAULT);
+                        else
+                            updateLine(ycoord, LABEL_ACTIVE_BRI, pct, "%");
+
+                        markConfigDirty();
                     }
-                    markConfigDirty();
-                    previousDisplayVal = displayVal;
+
+                    previousDisplayVal = pct;
                 }
                 break;
             }
             case IDLE: {
-                ycoord = 2;  // 3rd line
-                displayVal = map(reading, 4095, 0, 0, 100);
-                if (abs(displayVal - previousDisplayVal) >= HYST) {
-                    if (displayVal == 0) {
-                        idleBri = idleBri_default;
-                        updateLine(ycoord, LABEL_IDLE_BRI, LABEL_DEFAULT);
-                    } else {
-                        idleBri = map(reading, 4095, 0, 0, 255);
-                        updateLine(ycoord, LABEL_IDLE_BRI, displayVal, "%");
+                ycoord = 2;
+                int pct = map(reading, 4095, 0, 0, 100);
+
+                if (abs(pct - previousDisplayVal) >= HYST) {
+                    uint8_t newIdle = (pct == 0) ? idleBri_default : (uint8_t)map(reading, 4095, 0, 0, 255);
+
+                    if (newIdle != idleBri) {
+                        idleBri = newIdle;
+
+                        if (pct == 0)
+                            updateLine(ycoord, LABEL_IDLE_BRI, LABEL_DEFAULT);
+                        else
+                            updateLine(ycoord, LABEL_IDLE_BRI, pct, "%");
+
+                        markConfigDirty();
                     }
-                    markConfigDirty();
-                    previousDisplayVal = displayVal;
+
+                    previousDisplayVal = pct;
                 }
                 break;
             }
@@ -322,54 +344,29 @@ class UsermodKBIS26 : public Usermod {
     }
 
     void initiatePreset() {
-        uint8_t targetBri = (presetState == PRESET_IDLE) ? idleBri : activeBri;
+        if (presetState == previousPresetState) {
+            return;
+        }
+        bool gateOpen =((int32_t)(millis() - bootUpTimestamp) >= 0);
+        uint8_t targetBri = gateOpen ? ((presetState == PRESET_IDLE) ? idleBri : activeBri) : bootUpBri;  
         if (bri != targetBri) {
             bri = targetBri;
             stateUpdated(CALL_MODE_DIRECT_CHANGE);
         }
-
-        if (presetState == previousPresetState) {
-            return;
-        }
         applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
-        if (presetState == PRESET_IDLE) {
-            // updateEffectLine(false);
-            // Serial.println("off");
-            // display.display();
-        } else {
-            // updateEffectLine(true);
-            // Serial.println("on");
-            // display.display();
-        }
+
         previousPresetState = presetState;
+    }
+    uint32_t macDelayMs(uint32_t maxDelayMs) {
+        uint64_t mac = ESP.getEfuseMac();
+        uint32_t x = (uint32_t)(mac ^ (mac >> 32));
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        return x % maxDelayMs;
     }
 
    public:
-    bool readFromConfig(JsonObject& root) override {
-        // default settings values could be set here (or below using the 3-argument getJsonValue()) instead of in the class definition or constructor
-        // setting them inside readFromConfig() is slightly more robust, handling the rare but plausible use case of single value being missing after boot (e.g. if the cfg.json was manually edited and a value was removed)
-
-        JsonObject top = root[FPSTR(_name)];
-
-        bool configComplete = !top.isNull();
-
-        // A 3-argument getJsonValue() assigns the 3rd argument as a default value if the Json value is missing
-        configComplete &= getJsonValue(top["idleBri"], idleBri, idleBri_default);
-        configComplete &= getJsonValue(top["activeBri"], activeBri, activeBri_default);
-        configComplete &= getJsonValue(top["effectTime"], effectTime, effectTime_default);
-
-        return configComplete;
-    }
-    void addToConfig(JsonObject& root) override {
-        JsonObject top = root[FPSTR(_name)];
-        if (top.isNull()) top = root.createNestedObject(FPSTR(_name));
-
-        top["idleBri"] = idleBri;
-        top["activeBri"] = activeBri;
-        top["effectTime"] = effectTime;
-        top["active"] = true;
-        top["message"] = "KBIS26 usermod is running";
-    }
     void setup() override {
         Wire.begin(I2CSDAPIN, I2CSCLPIN);  // not in usermod??
         Wire.setClock(400000);
@@ -386,10 +383,11 @@ class UsermodKBIS26 : public Usermod {
         prefs.begin("kbis26", false);
         loadFromPrefs();  // should NOT call begin/end anymore
 
+        bootUpDelay = macDelayMs(8000);
+
         // Init the OLED
         displayReady = display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
-        
-        
+
         if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
             // Serial.println("SSD1306 not found.");
         } else {
@@ -397,10 +395,28 @@ class UsermodKBIS26 : public Usermod {
         }
         display.display();  // SSD splash screen
         resetDisplay();
+
         // explicitly print first lines of display
-        updateLine(0, LABEL_ACTIVE_TIME, LABEL_DEFAULT);
-        updateLine(1, LABEL_ACTIVE_BRI, LABEL_DEFAULT);
-        updateLine(2, LABEL_IDLE_BRI, LABEL_DEFAULT);
+        // ACTIVE TIME
+        if (effectTime == effectTime_default) {
+            updateLine(0, LABEL_ACTIVE_TIME, LABEL_DEFAULT);
+        } else {
+            updateLine(0, LABEL_ACTIVE_TIME, (int)(effectTime / 1000), "s");
+        }
+
+        // ACTIVE BRIGHTNESS
+        if (activeBri == activeBri_default) {
+            updateLine(1, LABEL_ACTIVE_BRI, LABEL_DEFAULT);
+        } else {
+            updateLine(1, LABEL_ACTIVE_BRI, (int)map(activeBri, 0, 255, 0, 100), "%");
+        }
+
+        // IDLE BRIGHTNESS
+        if (idleBri == idleBri_default) {
+            updateLine(2, LABEL_IDLE_BRI, LABEL_DEFAULT);
+        } else {
+            updateLine(2, LABEL_IDLE_BRI, (int)map(idleBri, 0, 255, 0, 100), "%");
+        }
         clearCursor();
         setCursor(currentCursor);
     }
@@ -409,22 +425,29 @@ class UsermodKBIS26 : public Usermod {
         static bool applied = false;
         static uint32_t bootMs = 0;
 
+        // wait 2s while wled comes up
         if (bootMs == 0) bootMs = millis();
-
         if (!applied && millis() - bootMs > 2000) {
             applied = true;
-
             applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
+            bootUpTimestamp = millis() + bootUpDelay;
         }
+
         if (strip.isUpdating()) return;
         monitorDoor();
-        initiatePreset();
+        if (applied) initiatePreset();
         cursor();
 
-        if (cfgDirty && millis() - cfgDirtySinceMs > 10000) {
+        if (!strip.isUpdating() && cfgDirty && millis() - cfgDirtySinceMs > 10000) {
             cfgDirty = false;
             saveToPrefs();
         }
+    }
+    
+    void addToConfig(JsonObject& root) override {
+    JsonObject top = root.createNestedObject(FPSTR(_name));
+    top["active"] = true;
+    top["message"] = "KBIS26 usermod is running";
     }
 
     uint16_t getId() override { return USERMOD_ID_UNSPECIFIED; }
