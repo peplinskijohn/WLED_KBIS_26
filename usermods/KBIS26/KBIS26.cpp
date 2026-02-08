@@ -27,7 +27,7 @@ class UsermodKBIS26 : public Usermod {
     const int MINEFFECTTIME = 1000;
 
     unsigned long timestamp1 = 0;
-    const int effectTime_default = 30000;
+    const int effectTime_default = 20000;  // 20s
     int effectTime = effectTime_default;
     int previousEffectTime = 0;
     int previousBrightnessOut = -1;
@@ -36,7 +36,7 @@ class UsermodKBIS26 : public Usermod {
     uint8_t presetState = PRESET_IDLE;
     uint8_t previousPresetState = PRESET_ACTIVE;
     bool presetLaunched = false;
-    const uint8_t idleBri_default = 6;
+    const uint8_t idleBri_default = 102;  // = 40% which was the setting that was approved
     const uint8_t activeBri_default = 255;
     uint8_t idleBri = idleBri_default;
     uint8_t activeBri = activeBri_default;
@@ -48,6 +48,7 @@ class UsermodKBIS26 : public Usermod {
     uint32_t bootUpDelay = 1000;
     uint32_t bootUpTimestamp = 0;
     const uint8_t bootUpBri = 10;
+    bool bootClamp = true;
 
     static const char _name[] PROGMEM;
     Preferences prefs;
@@ -307,6 +308,7 @@ class UsermodKBIS26 : public Usermod {
             display.print("CLSD");
         }
     }
+
     void monitorDoor() {
         static bool doorClosed = false;
         bool reedClosed = (digitalRead(REED) == LOW) ? true : false;  // closed = LOW
@@ -344,19 +346,33 @@ class UsermodKBIS26 : public Usermod {
     }
 
     void initiatePreset() {
-        if (presetState == previousPresetState) {
-            return;
+        static bool bootPresetApplied = false;
+        bool gateOpen = ((int32_t)(millis() - bootUpTimestamp) >= 0);
+        uint8_t targetBri = gateOpen ? ((presetState == PRESET_IDLE) ? idleBri : activeBri) : bootUpBri;
+
+        // keep units deliberately low brightness at bootup to prevent excessive inrush
+        if (bootClamp) {
+            const uint8_t CAP = idleBri_default;
+            if (presetState == PRESET_ACTIVE) {
+                if (targetBri > CAP) targetBri = bootUpBri;
+            } else {  // IDLE
+                if (targetBri > CAP) targetBri = CAP;
+            }
         }
-        bool gateOpen =((int32_t)(millis() - bootUpTimestamp) >= 0);
-        uint8_t targetBri = gateOpen ? ((presetState == PRESET_IDLE) ? idleBri : activeBri) : bootUpBri;  
+
         if (bri != targetBri) {
             bri = targetBri;
             stateUpdated(CALL_MODE_DIRECT_CHANGE);
         }
+        if (presetState == previousPresetState) {
+            return;
+        }
         applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
 
         previousPresetState = presetState;
+        bootClamp = false;
     }
+
     uint32_t macDelayMs(uint32_t maxDelayMs) {
         uint64_t mac = ESP.getEfuseMac();
         uint32_t x = (uint32_t)(mac ^ (mac >> 32));
@@ -383,6 +399,7 @@ class UsermodKBIS26 : public Usermod {
         prefs.begin("kbis26", false);
         loadFromPrefs();  // should NOT call begin/end anymore
 
+        //applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
         bootUpDelay = macDelayMs(8000);
 
         // Init the OLED
@@ -431,6 +448,10 @@ class UsermodKBIS26 : public Usermod {
             applied = true;
             applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
             bootUpTimestamp = millis() + bootUpDelay;
+            if (bri != bootUpBri) {
+                bri = bootUpBri;
+                stateUpdated(CALL_MODE_DIRECT_CHANGE);
+            }
         }
 
         if (strip.isUpdating()) return;
@@ -443,11 +464,11 @@ class UsermodKBIS26 : public Usermod {
             saveToPrefs();
         }
     }
-    
+
     void addToConfig(JsonObject& root) override {
-    JsonObject top = root.createNestedObject(FPSTR(_name));
-    top["active"] = true;
-    top["message"] = "KBIS26 usermod is running";
+        JsonObject top = root.createNestedObject(FPSTR(_name));
+        top["active"] = true;
+        top["message"] = "KBIS26 V2.2";
     }
 
     uint16_t getId() override { return USERMOD_ID_UNSPECIFIED; }
