@@ -16,6 +16,9 @@ const char LABEL_ACTIVE_TIME[] = "ACT Time:";
 const char LABEL_ACTIVE_BRI[] = "ACT Bri :";
 const char LABEL_IDLE_BRI[] = "IDL Bri :";
 const char LABEL_DEFAULT[] = "DFLT";
+const char LABEL_BUILD_STAMP[] = __TIME__;
+const char KBIS_VERSION[] =
+  "KBIS26" __DATE__ " " __TIME__;
 class UsermodKBIS26 : public Usermod {
    private:
     const int LED1 = 16;
@@ -49,6 +52,9 @@ class UsermodKBIS26 : public Usermod {
     uint32_t bootUpTimestamp = 0;
     const uint8_t bootUpBri = 10;
     bool bootClamp = true;
+    bool bootForceIdle = true;
+    bool sensorAtBoot = false;  // snapshot of reed at boot
+    bool idleLaunchDone = false;
 
     static const char _name[] PROGMEM;
     Preferences prefs;
@@ -68,9 +74,11 @@ class UsermodKBIS26 : public Usermod {
     }
 
     void saveToPrefs() {
+        prefs.begin("kbis26", false);   // read/write
         prefs.putUChar("idleBri", idleBri);
         prefs.putUChar("activeBri", activeBri);
         prefs.putUInt("effTime", effectTime);
+        prefs.end();
     }
 
     void resetDisplay() {
@@ -313,6 +321,17 @@ class UsermodKBIS26 : public Usermod {
         static bool doorClosed = false;
         bool reedClosed = (digitalRead(REED) == LOW) ? true : false;  // closed = LOW
 
+        // Boot override: stay IDLE until the sensor changes from its boot snapshot
+        if (bootForceIdle) {
+            presetState = PRESET_IDLE;
+
+            if (reedClosed != sensorAtBoot) {
+                bootForceIdle = false;  // RELEASE: back to normal forever
+                                        // fall through into normal logic immediately this loop
+            } else {
+                return;  // still forced -> do nothing else
+            }
+        }
         if (!reedClosed) {  // door open
             presetState = PRESET_IDLE;
             updateDoorLine(false);  // clear door line
@@ -330,6 +349,7 @@ class UsermodKBIS26 : public Usermod {
             display.display();
             // Serial.println("closed");
         }
+
         if (millis() - timestamp1 > effectTime) {  // initially false but when true: door closed but time has elapsed so stop effect
             presetState = PRESET_IDLE;
             return;
@@ -346,19 +366,11 @@ class UsermodKBIS26 : public Usermod {
     }
 
     void initiatePreset() {
-        static bool bootPresetApplied = false;
         bool gateOpen = ((int32_t)(millis() - bootUpTimestamp) >= 0);
         uint8_t targetBri = gateOpen ? ((presetState == PRESET_IDLE) ? idleBri : activeBri) : bootUpBri;
 
         // keep units deliberately low brightness at bootup to prevent excessive inrush
-        if (bootClamp) {
-            const uint8_t CAP = idleBri_default;
-            if (presetState == PRESET_ACTIVE) {
-                if (targetBri > CAP) targetBri = bootUpBri;
-            } else {  // IDLE
-                if (targetBri > CAP) targetBri = CAP;
-            }
-        }
+        if (bootForceIdle) targetBri = bootUpBri;
 
         if (bri != targetBri) {
             bri = targetBri;
@@ -370,7 +382,6 @@ class UsermodKBIS26 : public Usermod {
         applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
 
         previousPresetState = presetState;
-        bootClamp = false;
     }
 
     uint32_t macDelayMs(uint32_t maxDelayMs) {
@@ -398,8 +409,9 @@ class UsermodKBIS26 : public Usermod {
         // Serial.println("Serial active");
         prefs.begin("kbis26", false);
         loadFromPrefs();  // should NOT call begin/end anymore
+        prefs.end();
 
-        //applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
+        // applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
         bootUpDelay = macDelayMs(8000);
 
         // Init the OLED
@@ -434,6 +446,7 @@ class UsermodKBIS26 : public Usermod {
         } else {
             updateLine(2, LABEL_IDLE_BRI, (int)map(idleBri, 0, 255, 0, 100), "%");
         }
+        updateLine(3,LABEL_BUILD_STAMP, "");//display compile-time timestamp as visable version control.  is later cleared with door close.
         clearCursor();
         setCursor(currentCursor);
     }
@@ -446,12 +459,37 @@ class UsermodKBIS26 : public Usermod {
         if (bootMs == 0) bootMs = millis();
         if (!applied && millis() - bootMs > 2000) {
             applied = true;
-            applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
+
+            sensorAtBoot = (digitalRead(REED) == LOW);  // adjust if your logic is inverted
+            // force IDLE regardless of sensor
+            bootForceIdle = true;
             bootUpTimestamp = millis() + bootUpDelay;
+            idleLaunchDone = false;
+            // presetState = PRESET_IDLE;
+            // previousPresetState = 255;
+
+            //applyPreset(presetState, CALL_MODE_DIRECT_CHANGE);
             if (bri != bootUpBri) {
                 bri = bootUpBri;
                 stateUpdated(CALL_MODE_DIRECT_CHANGE);
             }
+        }
+        if (applied && !idleLaunchDone) {
+            bool gateOpen = ((int32_t)(millis() - bootUpTimestamp) >= 0);
+            if (!gateOpen) {
+                // still waiting; keep things dim (optional)
+                if (bri != bootUpBri) {
+                    bri = bootUpBri;
+                    stateUpdated(CALL_MODE_DIRECT_CHANGE);
+                }
+                return;  // do not proceed into normal behavior yet
+            }
+
+            // Gate opened: NOW launch the safe IDLE preset for the first time
+            presetState = PRESET_IDLE;
+            previousPresetState = PRESET_IDLE;  // force apply
+            applyPreset(PRESET_IDLE, CALL_MODE_DIRECT_CHANGE);
+            idleLaunchDone = true;
         }
 
         if (strip.isUpdating()) return;
@@ -468,7 +506,7 @@ class UsermodKBIS26 : public Usermod {
     void addToConfig(JsonObject& root) override {
         JsonObject top = root.createNestedObject(FPSTR(_name));
         top["active"] = true;
-        top["message"] = "KBIS26 V2.2";
+        top["message"] = KBIS_VERSION;
     }
 
     uint16_t getId() override { return USERMOD_ID_UNSPECIFIED; }
