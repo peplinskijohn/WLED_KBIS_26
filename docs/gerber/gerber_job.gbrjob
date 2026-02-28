@@ -1,0 +1,24 @@
+{
+    "Header": {
+        "Comment": "All values are metric (mm)",
+        "CreationDate": "2026-01-27T17:21:00Z",
+        "GenerationSoftware": {
+            "Application": "Fusion Electronics",
+            "Vendor": "Autodesk",
+            "Version": "9.7.0"
+        },
+        "Part": "Single"
+    },
+    "Overall": {
+        "BoardThickness": 1.6608,
+        "LayerNumber": 2,
+        "Name": {
+            "ProjectId": "PCB v49"
+        },
+        "Owner": "Peplinski John <peplinski.john@gmail.com>",
+        "Size": {
+            "X": 121.92,
+            "Y": 20.32
+        }
+    }
+}
