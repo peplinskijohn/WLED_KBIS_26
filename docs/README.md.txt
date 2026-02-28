@@ -2,7 +2,7 @@ this project consisted of 22 electronic units each which controlled an addressab
 
 The process for uploading the pre-flashed esp32 boards:  find in AP-mode, upload presets, upload config, (wled restarts), look for new AP: wled-Jay, use standard wled1234 password if necessary, change credentials in wled wifi, save, find AP again with new AP name/password, upload custom build (.bin), test.
 
-platformio.override.ini is included in the this docs folder as a reference for setting up usermod/pcd.
+platformio_override_reference is included in the this docs folder as a reference for setting up usermod/pcd.
 
 Here is the email I sent to client as user manual:
 
