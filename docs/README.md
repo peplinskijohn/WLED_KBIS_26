@@ -1,7 +1,7 @@
 
 # WLED_KBIS_26
 
-Fork of WLED that utalizes usermod and custom hardware
+Fork of WLED that utilizes usermod and custom hardware
 
 
 ## Overview
