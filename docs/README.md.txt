@@ -1,8 +1,19 @@
-this project consisted of 22 electronic units each which controlled an addressable led string and a high-watt addressable led.  WLED was used to control the leds in conjunction with a usermod, KBIS_26, that monitored the status of a reed switch and switched wled presets accordingly.  A custom pcb was made to integrate with a DIG UNO driver board and contained a port for the above mentioned reed switch, a button, a potentiometer, and an lcd screen.  The usermod/pcb allows for the in-the-field adjustment of three dynamic variables using button and pot.  
 
-The process for uploading the pre-flashed esp32 boards:  find in AP-mode, upload presets, upload config, (wled restarts), look for new AP: wled-Jay, use standard wled1234 password if necessary, change credentials in wled wifi, save, find AP again with new AP name/password, upload custom build (.bin), test.
+# WLED_KBIS_26
+
+Fork of WLED that utalizes usermod and custom hardware
+
+## Overview
+
+This project consisted of 22 electronic units each which controlled an addressable led string and a high-watt addressable led.  WLED was used to control the leds in conjunction with a usermod, KBIS_26, that monitored the status of a reed switch and switched wled presets accordingly.  A custom pcb was made to integrate with a DIG UNO driver board and contained a port for the above mentioned reed switch, a button, a potentiometer, and an lcd screen.  The usermod/pcb allows for the in-the-field adjustment of three dynamic variables using button and pot.  
 
 platformio_override_reference is included in the this docs folder as a reference for setting up usermod/pcd.
+
+## Flashing esp32
+
+The process for uploading the pre-flashed esp32 boards:  find in AP-mode, upload presets, upload config, (wled restarts), look for new AP: wled-AP-Jay, use standard wled1234 password if necessary, change credentials in wled wifi, save, find AP again with new AP name/password, upload custom build (firmware.bin), test.
+
+## Manual with project specific instructions
 
 Here is the email I sent to client as user manual:
 
